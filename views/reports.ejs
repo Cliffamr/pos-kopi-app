@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laporan Penjualan - POS Kopi</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            min-height: 100vh; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .navbar { 
+            background: rgba(255, 255, 255, 0.95) !important; 
+            backdrop-filter: blur(10px); 
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
+        }
+        .card { 
+            border: none; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1); 
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover { 
+            transform: translateY(-5px); 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+        }
+        .table { 
+            border-radius: 10px; 
+            overflow: hidden; 
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .container { 
+            background: rgba(255, 255, 255, 0.9); 
+            border-radius: 20px; 
+            padding: 30px; 
+            margin-top: 20px; 
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        h1 { 
+            color: #333; 
+            font-weight: 700; 
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        .alert { 
+            border-radius: 10px; 
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <nav class="navbar navbar-expand-lg navbar-light bg-light mb-4">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#"><i class="fas fa-chart-line"></i> POS Kopi - Laporan</a>
+                <div class="d-flex">
+                    <span class="navbar-text me-3"><i class="fas fa-user"></i> Selamat datang, <%= user.username %></span>
+                    <a href="/" class="btn btn-outline-primary me-2"><i class="fas fa-cash-register"></i> POS</a>
+                    <a href="/admin" class="btn btn-outline-info me-2"><i class="fas fa-tools"></i> Kelola Produk</a>
+                    <a href="/logout" class="btn btn-outline-danger"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                </div>
+            </div>
+        </nav>
+
+        <h1>Laporan Penjualan Hari Ini (<%= date %>)</h1>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <h3>Total Penjualan: Rp <%= new Intl.NumberFormat('id-ID').format(totalSales) %></h3>
+                <p>Jumlah Pesanan: <%= orders.length %></p>
+            </div>
+        </div>
+
+        <h2>Detail Pesanan</h2>
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>ID Pesanan</th>
+                        <th>Tanggal</th>
+                        <th>Produk</th>
+                        <th>Total</th>
+                        <th>Pembayaran</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <% orders.forEach(order => { %>
+                        <tr>
+                            <td><%= order.id %></td>
+                            <td><%= new Date(order.date).toLocaleString('id-ID') %></td>
+                            <td><%= order.items %></td>
+                            <td>Rp <%= new Intl.NumberFormat('id-ID').format(order.total) %></td>
+                            <td><%= order.payment_method %></td>
+                        </tr>
+                    <% }); %>
+                </tbody>
+            </table>
+        </div>
+
+        <% if (orders.length === 0) { %>
+            <div class="alert alert-info">Belum ada pesanan hari ini.</div>
+        <% } %>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
