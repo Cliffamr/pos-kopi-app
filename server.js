@@ -25,10 +25,10 @@ app.use(session({
 
 // MySQL connection
 const db = mysql.createConnection({
-    host: 'localhost',
-    user: 'root', // Ganti dengan user MySQL Anda
-    password: '', // Ganti dengan password MySQL Anda
-    database: 'pos_kopi'
+    host: 'u10uht.h.filess.io',
+    user: 'poskopi_howeversay', // Ganti dengan user MySQL Anda
+    password: '587bada35ed9e7848c6f8c57b27899f88c5e7d69', // Ganti dengan password MySQL Anda
+    database: 'poskopi_howeversay'
 });
 
 // Connect to MySQL
