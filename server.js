@@ -1,9 +1,11 @@
+require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2');
+const { createClient } = require('@libsql/client');
 const bodyParser = require('body-parser');
 const path = require('path');
 const PDFDocument = require('pdfkit');
 const session = require('express-session');
+const fs = require('fs');
 
 const app = express();
 const port = 3000;
@@ -23,58 +25,34 @@ app.use(session({
     cookie: { secure: false } // Set to true if using HTTPS
 }));
 
-// MySQL connection
-const db = mysql.createConnection({
-    host: 'u10uht.h.filess.io',
-    user: 'poskopi_howeversay', // Ganti dengan user MySQL Anda
-    password: '587bada35ed9e7848c6f8c57b27899f88c5e7d69', // Ganti dengan password MySQL Anda
-    database: 'poskopi_howeversay'
-});
-
-// Connect to MySQL
-db.connect((err) => {
-    if (err) {
-        console.error('Error connecting to MySQL:', err);
-        return;
-    }
-    console.log('Connected to MySQL database');
-    initializeDatabase();
+// Turso libSQL connection
+const db = createClient({
+    url: process.env.TURSO_DATABASE_URL,
+    authToken: process.env.TURSO_AUTH_TOKEN
 });
 
 // Initialize database and tables
-function initializeDatabase() {
-    // Disable foreign key checks
-    db.query('SET FOREIGN_KEY_CHECKS = 0', (err) => {
-        if (err) console.error('Error disabling FK checks:', err);
-    });
-    // Drop tables in reverse order due to foreign keys
-    const dropQueries = [
-        'DROP TABLE IF EXISTS receipts',
-        'DROP TABLE IF EXISTS order_items',
-        'DROP TABLE IF EXISTS orders',
-        'DROP TABLE IF EXISTS products',
-        'DROP TABLE IF EXISTS users'
-    ];
-    dropQueries.forEach(query => {
-        db.query(query, (err) => {
-            if (err) console.error('Error dropping table:', err);
-        });
-    });
-    // Enable foreign key checks
-    db.query('SET FOREIGN_KEY_CHECKS = 1', (err) => {
-        if (err) console.error('Error enabling FK checks:', err);
-    });
-    // Then create tables
-    const sql = require('fs').readFileSync('./schema.sql', 'utf8');
-    const queries = sql.split(';').filter(q => q.trim());
-    queries.forEach(query => {
-        if (query.trim()) {
-            db.query(query, (err) => {
-                if (err) console.error('Error executing query:', err);
-            });
+async function initializeDatabase() {
+    try {
+        // Enable foreign keys
+        await db.execute('PRAGMA foreign_keys = ON');
+
+        // Create tables
+        const sql = fs.readFileSync('./schema.sql', 'utf8');
+        const queries = sql.split(';').filter(q => q.trim());
+        for (const query of queries) {
+            if (query.trim()) {
+                await db.execute(query);
+            }
         }
-    });
+        console.log('Database initialized successfully');
+    } catch (err) {
+        console.error('Error initializing database:', err);
+    }
 }
+
+// Call initialize
+initializeDatabase();
 
 // Middleware to check authentication
 function requireAuth(req, res, next) {
@@ -90,19 +68,24 @@ app.get('/login', (req, res) => {
     res.render('login', { error: null });
 });
 
-app.post('/login', (req, res) => {
+// Routes
+app.get('/login', (req, res) => {
+    res.render('login', { error: null });
+});
+
+app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    db.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password], (err, results) => {
-        if (err) {
-            return res.render('login', { error: 'Terjadi kesalahan' });
-        }
-        if (results.length > 0) {
-            req.session.user = results[0];
+    try {
+        const result = await db.execute('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
+        if (result.rows.length > 0) {
+            req.session.user = result.rows[0];
             res.redirect('/');
         } else {
             res.render('login', { error: 'Username atau password salah' });
         }
-    });
+    } catch (err) {
+        res.render('login', { error: 'Terjadi kesalahan' });
+    }
 });
 
 app.get('/logout', (req, res) => {
@@ -110,16 +93,16 @@ app.get('/logout', (req, res) => {
     res.redirect('/login');
 });
 
-app.get('/', requireAuth, (req, res) => {
-    db.query('SELECT * FROM products', (err, results) => {
-        if (err) {
-            return res.status(500).send('Error mengambil produk');
-        }
-        res.render('index', { products: results, user: req.session.user });
-    });
+app.get('/', requireAuth, async (req, res) => {
+    try {
+        const result = await db.execute('SELECT * FROM products');
+        res.render('index', { products: result.rows, user: req.session.user });
+    } catch (err) {
+        res.status(500).send('Error mengambil produk');
+    }
 });
 
-app.post('/order', (req, res) => {
+app.post('/order', async (req, res) => {
     const { items, payment_method, payment_amount } = req.body;
     let total = 0;
     const orderItems = JSON.parse(items);
@@ -129,32 +112,29 @@ app.post('/order', (req, res) => {
         total += item.price * item.quantity;
     });
 
-    // Insert order
-    db.query('INSERT INTO orders (total, payment_method, payment_amount) VALUES (?, ?, ?)', [total, payment_method, payment_amount || 0], function(err, result) {
-        if (err) {
-            return res.status(500).send('Error membuat pesanan');
-        }
-        const orderId = result.insertId;
+    try {
+        // Insert order
+        const orderResult = await db.execute('INSERT INTO orders (total, payment_method, payment_amount) VALUES (?, ?, ?)', [total, payment_method, payment_amount || 0]);
+        const orderId = orderResult.lastInsertRowid;
 
         // Insert order items
-        const values = orderItems.map(item => [orderId, item.id, item.quantity, item.price]);
-        db.query('INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ?', [values], function(err) {
-            if (err) {
-                return res.status(500).send('Error menyimpan item pesanan');
-            }
+        for (const item of orderItems) {
+            await db.execute('INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)', [orderId, item.id, item.quantity, item.price]);
+        }
 
-            // Update stock
-            orderItems.forEach(item => {
-                db.query('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.id]);
-            });
+        // Update stock
+        for (const item of orderItems) {
+            await db.execute('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.id]);
+        }
 
-            // Generate receipt
-            generateReceipt(orderId, orderItems, total, payment_method, payment_amount || 0, res);
-        });
-    });
+        // Generate receipt
+        await generateReceipt(orderId, orderItems, total, payment_method, payment_amount || 0, res);
+    } catch (err) {
+        res.status(500).send('Error membuat pesanan');
+    }
 });
 
-function generateReceipt(orderId, items, total, paymentMethod, paymentAmount, res) {
+async function generateReceipt(orderId, items, total, paymentMethod, paymentAmount, res) {
     let receiptText = `================================\n`;
     receiptText += `         KAWULO STREET\n`;
     receiptText += `   Jl Ahmad Yani Kudus\n`;
@@ -178,29 +158,33 @@ function generateReceipt(orderId, items, total, paymentMethod, paymentAmount, re
     receiptText += `Terima Kasih!\n`;
     receiptText += `================================\n`;
 
-    // Save to database
-    db.query('INSERT INTO receipts (order_id, receipt_text) VALUES (?, ?)', [orderId, receiptText], function(err, result) {
-        if (err) {
-            return res.status(500).send('Error menyimpan struk');
-        }
-        res.json({ success: true, receiptId: result.insertId, receiptText });
-    });
+    try {
+        // Save to database
+        await db.execute('INSERT INTO receipts (order_id, receipt_text) VALUES (?, ?)', [orderId, receiptText]);
+        res.json({ success: true, receiptId: orderId, receiptText });
+    } catch (err) {
+        res.status(500).send('Error menyimpan struk');
+    }
 }
 
-app.get('/receipt/:id', (req, res) => {
+app.get('/receipt/:id', async (req, res) => {
     const receiptId = req.params.id;
-    db.query('SELECT * FROM receipts WHERE id = ?', [receiptId], (err, results) => {
-        if (err || results.length === 0) {
+    try {
+        const result = await db.execute('SELECT * FROM receipts WHERE id = ?', [receiptId]);
+        if (result.rows.length === 0) {
             return res.status(404).send('Struk tidak ditemukan');
         }
-        res.send(`<pre>${results[0].receipt_text}</pre><br><button onclick="window.print()">Print</button>`);
-    });
+        res.send(`<pre>${result.rows[0].receipt_text}</pre><br><button onclick="window.print()">Print</button>`);
+    } catch (err) {
+        res.status(404).send('Struk tidak ditemukan');
+    }
 });
 
-app.get('/receipt/pdf/:id', (req, res) => {
+app.get('/receipt/pdf/:id', async (req, res) => {
     const receiptId = req.params.id;
-    db.query('SELECT * FROM receipts WHERE id = ?', [receiptId], (err, results) => {
-        if (err || results.length === 0) {
+    try {
+        const result = await db.execute('SELECT * FROM receipts WHERE id = ?', [receiptId]);
+        if (result.rows.length === 0) {
             return res.status(404).send('Struk tidak ditemukan');
         }
 
@@ -209,70 +193,72 @@ app.get('/receipt/pdf/:id', (req, res) => {
         res.setHeader('Content-Disposition', 'attachment; filename="struk.pdf"');
         doc.pipe(res);
 
-        doc.fontSize(12).text(results[0].receipt_text);
+        doc.fontSize(12).text(result.rows[0].receipt_text);
         doc.end();
-    });
+    } catch (err) {
+        res.status(404).send('Struk tidak ditemukan');
+    }
 });
 
 // Admin routes
-app.get('/admin', requireAuth, (req, res) => {
-    db.query('SELECT * FROM products', (err, results) => {
-        if (err) {
-            return res.status(500).send('Error mengambil produk');
-        }
-        res.render('admin', { products: results, user: req.session.user });
-    });
+app.get('/admin', requireAuth, async (req, res) => {
+    try {
+        const result = await db.execute('SELECT * FROM products');
+        res.render('admin', { products: result.rows, user: req.session.user });
+    } catch (err) {
+        res.status(500).send('Error mengambil produk');
+    }
 });
 
-app.post('/admin/product', requireAuth, (req, res) => {
+app.post('/admin/product', requireAuth, async (req, res) => {
     const { name, price, stock, image } = req.body;
-    db.query('INSERT INTO products (name, price, stock, image) VALUES (?, ?, ?, ?)', [name, parseInt(price), parseInt(stock), image || 'https://via.placeholder.com/200x150?text=No+Image'], function(err) {
-        if (err) {
-            return res.status(500).send('Error menambah produk');
-        }
+    try {
+        await db.execute('INSERT INTO products (name, price, stock, image) VALUES (?, ?, ?, ?)', [name, parseInt(price), parseInt(stock), image || 'https://via.placeholder.com/200x150?text=No+Image']);
         res.redirect('/admin');
-    });
+    } catch (err) {
+        res.status(500).send('Error menambah produk');
+    }
 });
 
-app.post('/admin/product/:id/update', requireAuth, (req, res) => {
+app.post('/admin/product/:id/update', requireAuth, async (req, res) => {
     const { name, price, stock, image } = req.body;
     const id = req.params.id;
-    db.query('UPDATE products SET name = ?, price = ?, stock = ?, image = ? WHERE id = ?', [name, parseInt(price), parseInt(stock), image, id], function(err) {
-        if (err) {
-            return res.status(500).send('Error update produk');
-        }
+    try {
+        await db.execute('UPDATE products SET name = ?, price = ?, stock = ?, image = ? WHERE id = ?', [name, parseInt(price), parseInt(stock), image, id]);
         res.redirect('/admin');
-    });
+    } catch (err) {
+        res.status(500).send('Error update produk');
+    }
 });
 
-app.post('/admin/product/:id/delete', requireAuth, (req, res) => {
+app.post('/admin/product/:id/delete', requireAuth, async (req, res) => {
     const id = req.params.id;
-    db.query('DELETE FROM products WHERE id = ?', [id], function(err) {
-        if (err) {
-            return res.status(500).send('Error hapus produk');
-        }
+    try {
+        await db.execute('DELETE FROM products WHERE id = ?', [id]);
         res.redirect('/admin');
-    });
+    } catch (err) {
+        res.status(500).send('Error hapus produk');
+    }
 });
 
 // Reports
-app.get('/reports', requireAuth, (req, res) => {
+app.get('/reports', requireAuth, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
-    db.query(`
-        SELECT o.id, o.date, o.total, o.payment_method, GROUP_CONCAT(CONCAT(p.name, ' x', oi.quantity)) as items
-        FROM orders o
-        JOIN order_items oi ON o.id = oi.order_id
-        JOIN products p ON oi.product_id = p.id
-        WHERE DATE(o.date) = ?
-        GROUP BY o.id
-        ORDER BY o.date DESC
-    `, [today], (err, results) => {
-        if (err) {
-            return res.status(500).send('Error mengambil laporan');
-        }
-        const totalSales = results.reduce((sum, order) => sum + order.total, 0);
-        res.render('reports', { orders: results, totalSales, date: today, user: req.session.user });
-    });
+    try {
+        const result = await db.execute(`
+            SELECT o.id, o.date, o.total, o.payment_method, GROUP_CONCAT(p.name || ' x' || oi.quantity) as items
+            FROM orders o
+            JOIN order_items oi ON o.id = oi.order_id
+            JOIN products p ON oi.product_id = p.id
+            WHERE DATE(o.date) = ?
+            GROUP BY o.id
+            ORDER BY o.date DESC
+        `, [today]);
+        const totalSales = result.rows.reduce((sum, order) => sum + order.total, 0);
+        res.render('reports', { orders: result.rows, totalSales, date: today, user: req.session.user });
+    } catch (err) {
+        res.status(500).send('Error mengambil laporan');
+    }
 });
 
 function formatIDR(amount) {
