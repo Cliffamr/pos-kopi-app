@@ -130,7 +130,8 @@ app.post('/order', async (req, res) => {
         // Generate receipt
         await generateReceipt(orderId, orderItems, total, payment_method, payment_amount || 0, res);
     } catch (err) {
-        res.status(500).send('Error membuat pesanan');
+        console.error('Order error:', err);
+        res.status(500).json({ success: false, message: 'Error membuat pesanan: ' + err.message });
     }
 });
 
@@ -163,7 +164,8 @@ async function generateReceipt(orderId, items, total, paymentMethod, paymentAmou
         await db.execute('INSERT INTO receipts (order_id, receipt_text) VALUES (?, ?)', [orderId, receiptText]);
         res.json({ success: true, receiptId: orderId, receiptText });
     } catch (err) {
-        res.status(500).send('Error menyimpan struk');
+        console.error('Receipt error:', err);
+        res.status(500).json({ success: false, message: 'Error menyimpan struk: ' + err.message });
     }
 }
 
